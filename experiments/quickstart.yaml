@@ -1,0 +1,38 @@
+runs: 1
+seed_strategy: deterministic
+max_cost_usd: 5.0
+methodology_version: "2.0"
+methodology_profile: canonical-v2-baseline
+output_dir: results/quickstart
+
+experiments:
+  - name: Quickstart sanity check
+    note: Minimal LoCoMo smoke run. Real API execution requires explicit approval.
+    provider:
+      type: full_context
+      config: {}
+    benchmark:
+      type: locomo
+      config:
+        # One conversation keeps this a smoke run. Under canonical-v2 the category set is pinned,
+        # so scope can only be reduced by conversation, not by category.
+        conversations: ["conv-44"]
+        categories:
+          - single_hop
+          - multi_hop
+          - temporal
+          - open_domain
+          - adversarial
+      audit_mode: both
+    answer_model:
+      type: openai
+      model: gpt-4o-mini-2024-07-18
+      temperature: 0.0
+      max_output_tokens: 128
+      config: {}
+    judge:
+      type: anthropic
+      model: claude-haiku-4-5-20251001
+      temperature: 0.0
+      config: {}
+    max_concurrent_questions: 2

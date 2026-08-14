@@ -1,0 +1,35 @@
+__pycache__/
+*.pyc
+
+.env
+.env.local
+
+.venv/
+venv/
+
+# Run artifacts are never committed. The patterns below must match nested output
+# directories too (results/<suite>/runs/...), not just the top level: suites write to
+# results/<name>/ and a top-level-only pattern left those untracked-but-not-ignored,
+# one `git add -A` away from committing them. Artifacts can also contain resolved
+# config values, so treat the whole tree as untrackable.
+results/
+
+.pytest_cache/
+.ruff_cache/
+.pyright_cache/
+# Scanner working directory. Holds analysis state, not source, and was sitting untracked
+# but not ignored -- the same gap that left run artifacts one `git add -A` from being
+# committed.
+.scannerwork/
+
+.vscode/
+.idea/
+
+dist/
+build/
+
+# Local agent-tooling state, not project content: review-decision logs and per-machine settings.
+# Ignored rather than left untracked because `git status --porcelain` is what decides whether a run
+# records an identifiable build (build.py). An untracked file here marked every build `.dirty`,
+# which makes a paid run unresumable and its artifact unable to say what code produced it.
+.claude/

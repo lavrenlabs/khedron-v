@@ -1,0 +1,82 @@
+{%- macro score_cell(score) -%}
+{%- if score is none -%}
+n/a
+{%- else -%}
+{{ "%.1f%% [%.1f, %.1f]" % (score.point_estimate * 100, score.ci_95_low * 100, score.ci_95_high * 100) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro delta_cell(delta) -%}
+{%- if delta is none -%}
+n/a
+{%- else -%}
+{{ "%+.1f pp" % (delta * 100) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro ci_overlap_cell(ci_overlaps) -%}
+{%- if ci_overlaps is none -%}
+n/a
+{%- elif ci_overlaps -%}
+CI-overlapping
+{%- else -%}
+CI-separated
+{%- endif -%}
+{%- endmacro -%}
+{%- macro significance_cell(significant) -%}
+{%- if significant is none -%}
+n/a
+{%- elif significant -%}
+yes
+{%- else -%}
+no
+{%- endif -%}
+{%- endmacro -%}
+{%- set baseline_run_id = comparison.run_ids[0] -%}
+{%- set candidate_run_id = comparison.run_ids[1] -%}
+# Comparison Report
+
+{% if generated_at is defined -%}
+**Generated at:** {{ generated_at }}
+
+{% endif -%}
+## Methodology and Compatibility
+
+| Field | Value |
+|---|---|
+| Comparison mode | {{ comparison.mode }} |
+| Baseline run ID | {{ baseline_run_id }} |
+| Candidate run ID | {{ candidate_run_id }} |
+| Compatible | {% if comparison.compatible %}Yes{% else %}No{% endif %} |
+
+{% if comparison.compatibility_warnings -%}
+Compatibility warnings:
+
+{% for warning in comparison.compatibility_warnings -%}
+- {{ warning }}
+{% endfor %}
+{% else -%}
+No compatibility warnings were emitted.
+{% endif %}
+
+Detailed per-run methodology metadata is available in the corresponding run reports.
+
+## Score Deltas
+
+| Metric | Mode | Baseline | Candidate | Point delta | CI overlap | Significant |
+|---|---|---|---|---:|---|---|
+{% for delta in comparison.score_deltas -%}
+| {% if delta.category == "overall" %}overall{% else %}{{ delta.category.value }}{% endif %} | {{ delta.mode }} | {{ score_cell(delta.baseline_score) }} | {{ score_cell(delta.candidate_score) }} | {{ delta_cell(delta.point_delta) }} | {{ ci_overlap_cell(delta.ci_overlaps) }} | {{ significance_cell(delta.statistically_significant) }} |
+{% else -%}
+| n/a | {{ comparison.mode }} | n/a | n/a | n/a | n/a | n/a |
+{% endfor %}
+
+## Question Differences
+
+{% if comparison.differing_questions -%}
+| Question ID | Category | {{ baseline_run_id }} verdict | {{ baseline_run_id }} score | {{ candidate_run_id }} verdict | {{ candidate_run_id }} score |
+|---|---|---|---:|---|---:|
+{% for difference in comparison.differing_questions -%}
+| {{ difference.question_id }} | {{ difference.category.value }} | {{ difference.verdicts_by_run_id[baseline_run_id].value }} | {{ "%.1f" % difference.scores_by_run_id[baseline_run_id] }} | {{ difference.verdicts_by_run_id[candidate_run_id].value }} | {{ "%.1f" % difference.scores_by_run_id[candidate_run_id] }} |
+{% endfor -%}
+{% else -%}
+No question-level differences were detected.
+{% endif %}

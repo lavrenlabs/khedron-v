@@ -1,0 +1,97 @@
+{%- macro score_cell(score) -%}
+{%- if score is none -%}
+n/a
+{%- else -%}
+{{ "%.1f%% [%.1f, %.1f]" % (score.point_estimate * 100, score.ci_95_low * 100, score.ci_95_high * 100) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro pct(value) -%}
+{{ "%.1f%%" % (value * 100) }}
+{%- endmacro -%}
+# Executive Summary - {{ context.run_status.experiment_name }}
+
+{% if generated_at is defined -%}
+**Generated at:** {{ generated_at }}
+
+{% endif -%}
+**Run ID:** {{ context.run_status.run_id }}
+**Status:** {{ context.run_status.status }}
+
+## Bottom Line
+
+{% if context.methodology.corpus_is_complete is false -%}
+> **This run is not a measurement.** It covered {{ context.methodology.corpus_scope_label }}.
+> The scores below are arithmetically correct over the questions that were asked and do not
+> support any claim about the benchmark as a whole. Do not publish or compare them.
+
+{% endif -%}
+
+{% if context.run_status.overall_score_audited is not none -%}
+{{ context.run_status.experiment_name }} achieved **{{ score_cell(context.run_status.overall_score_audited) }}** in audited mode on {{ context.methodology.benchmark_type }}, scored over {{ context.methodology.scored_scope_label }}{% if context.methodology.corpus_is_complete is not none %}, across {{ context.methodology.corpus_scope_label }}{% endif %}.
+{% elif context.run_status.overall_score_standard is not none -%}
+{{ context.run_status.experiment_name }} achieved **{{ score_cell(context.run_status.overall_score_standard) }}** in standard mode on {{ context.methodology.benchmark_type }}, scored over {{ context.methodology.scored_scope_label }}{% if context.methodology.corpus_is_complete is not none %}, across {{ context.methodology.corpus_scope_label }}{% endif %}.
+{% else -%}
+No overall score is available for this run.
+{% endif %}
+
+## Overall Scores
+
+| Mode | Score |
+|---|---|
+| Audited | {{ score_cell(context.run_status.overall_score_audited) }} |
+| Standard | {{ score_cell(context.run_status.overall_score_standard) }} |
+
+{% if context.run_status.by_category_audited or context.run_status.by_category_standard -%}
+## Per-Category Scores
+
+{% if context.run_status.by_category_audited -%}
+### Audited
+
+| Category | Score |
+|---|---|
+{% for category, score in context.run_status.by_category_audited.items() -%}
+| {{ category }} | {{ score_cell(score) }} |
+{% endfor %}
+{% endif -%}
+{% if context.run_status.by_category_standard -%}
+### Standard
+
+| Category | Score |
+|---|---|
+{% for category, score in context.run_status.by_category_standard.items() -%}
+| {{ category }} | {{ score_cell(score) }} |
+{% endfor %}
+{% endif -%}
+{% endif -%}
+
+## Failure Analysis Summary
+
+| Metric | Value |
+|---|---|
+| Questions evaluated | {{ context.questions|length }} |
+| Failed questions | {{ context.failed_questions|length }} |
+| Detected patterns | {{ context.failure_analysis.patterns|length }} |
+
+{% if context.failure_analysis.patterns -%}
+Top detected patterns:
+
+{% for pattern in context.failure_analysis.patterns -%}
+- {{ pattern.pattern_name }}: {{ pattern.n_affected_questions }} affected question(s), {{ pct(pattern.confidence) }} rule confidence.
+{% endfor %}
+{% else -%}
+No failure patterns were detected.
+{% endif %}
+
+## Cost Summary
+
+Total cost: ${{ "%.2f" % context.cost_summary.total_cost_usd }}
+
+| Phase | Cost |
+|---|---|
+{% for phase, cost in context.cost_summary.cost_by_phase.items() -%}
+| {{ phase }} | ${{ "%.2f" % cost }} |
+{% else -%}
+| n/a | $0.00 |
+{% endfor %}
+
+{% include "_methodology_disclosure.md.j2" %}

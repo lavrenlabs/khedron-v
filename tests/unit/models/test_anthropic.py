@@ -1,0 +1,468 @@
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from khedron.errors import (
+    ModelAuthenticationError,
+    ModelBillingError,
+    ModelError,
+    ModelRateLimitError,
+    ModelTimeoutError,
+)
+from khedron.models import AnthropicModel, AnthropicModelConfig
+from khedron.models.registry import get_model_class
+
+MODEL_ID = "claude-sonnet-4-5"
+
+
+class FakeUsage:
+    def __init__(self, *, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class FakeContentBlock:
+    def __init__(self, text: str) -> None:
+        self.type = "text"
+        self.text = text
+
+
+class FakeResponse:
+    def __init__(
+        self,
+        *,
+        output_text: str = "Alice moved to Rome.",
+        input_tokens: int = 100,
+        output_tokens: int = 25,
+    ) -> None:
+        self.id = "msg-1"
+        self.model = MODEL_ID
+        self.role = "assistant"
+        self.stop_reason = "end_turn"
+        self.content = [FakeContentBlock(output_text)]
+        self.usage = FakeUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+
+
+class FakeAnthropicError(Exception):
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class FakeRateLimitError(FakeAnthropicError):
+    pass
+
+
+class FakeServerError(FakeAnthropicError):
+    pass
+
+
+class FakeAuthenticationError(FakeAnthropicError):
+    pass
+
+
+class FakeBillingError(FakeAnthropicError):
+    pass
+
+
+class FakeConnectionError(FakeAnthropicError):
+    """Mirrors the SDK's APIConnectionError: a transient failure with no status code."""
+
+
+class FakeMessagesAPI:
+    def __init__(self, items: list[object]) -> None:
+        self._items = list(items)
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **kwargs: object) -> object:
+        self.calls.append(dict(kwargs))
+        if not self._items:
+            raise AssertionError("fake response queue is empty")
+        item = self._items.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+class FakeClient:
+    def __init__(self, items: list[object]) -> None:
+        self.messages = FakeMessagesAPI(items)
+        self.close_count = 0
+
+    async def close(self) -> None:
+        self.close_count += 1
+
+
+class FakeClientFactory:
+    def __init__(self, client: FakeClient) -> None:
+        self.client = client
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float,
+    ) -> FakeClient:
+        self.calls.append(
+            {
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return self.client
+
+
+class SleepRecorder:
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+
+
+def test_anthropic_config_defaults_and_validation() -> None:
+    config = AnthropicModelConfig(model_id=MODEL_ID)
+
+    if config.model_id != MODEL_ID:
+        raise AssertionError(config)
+    if config.api_key_env_var != "ANTHROPIC_API_KEY":
+        raise AssertionError(config)
+    if config.timeout_seconds != 60.0:
+        raise AssertionError(config)
+    if config.max_retries != 3:
+        raise AssertionError(config)
+
+    with pytest.raises(ValidationError):
+        AnthropicModelConfig(model_id="")
+    with pytest.raises(ValidationError):
+        AnthropicModelConfig(model_id=MODEL_ID, api_key_env_var="")
+    with pytest.raises(ValidationError):
+        AnthropicModelConfig(model_id=MODEL_ID, timeout_seconds=0)
+    with pytest.raises(ValidationError):
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=-1)
+
+
+def test_anthropic_model_is_registered() -> None:
+    if get_model_class("anthropic") is not AnthropicModel:
+        raise AssertionError("anthropic model was not registered")
+
+
+def test_model_properties_are_stable() -> None:
+    model = AnthropicModel(AnthropicModelConfig(model_id=MODEL_ID))
+
+    if model.model_id != MODEL_ID:
+        raise AssertionError(model.model_id)
+    if model.vendor != "anthropic":
+        raise AssertionError(model.vendor)
+
+
+@pytest.mark.asyncio
+async def test_missing_api_key_raises_authentication_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client = FakeClient([FakeResponse()])
+    factory = FakeClientFactory(client)
+    model = AnthropicModel(AnthropicModelConfig(model_id=MODEL_ID), client_factory=factory)
+
+    with pytest.raises(ModelAuthenticationError):
+        await model.initialize()
+
+    if factory.calls != []:
+        raise AssertionError(factory.calls)
+
+
+@pytest.mark.asyncio
+async def test_initialize_creates_client_from_env_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_TEST_KEY", "test-key")
+    client = FakeClient([FakeResponse()])
+    factory = FakeClientFactory(client)
+    model = AnthropicModel(
+        AnthropicModelConfig(
+            model_id=MODEL_ID,
+            api_key_env_var="ANTHROPIC_TEST_KEY",
+            timeout_seconds=12.5,
+        ),
+        client_factory=factory,
+    )
+
+    await model.initialize()
+    await model.initialize()
+
+    if factory.calls != [{"api_key": "test-key", "timeout_seconds": 12.5}]:
+        raise AssertionError(factory.calls)
+
+
+@pytest.mark.asyncio
+async def test_generate_maps_success_response_and_computes_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient([FakeResponse(output_text="Rome", input_tokens=100, output_tokens=25)])
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID),
+        client_factory=FakeClientFactory(client),
+    )
+
+    result = await model.generate("Where did Alice move?", max_output_tokens=64, temperature=0.2)
+
+    if result.output != "Rome":
+        raise AssertionError(result)
+    if result.input_tokens != 100 or result.output_tokens != 25:
+        raise AssertionError(result)
+    if result.cost_usd != pytest.approx(0.000675):
+        raise AssertionError(result.cost_usd)
+    if result.model_id != MODEL_ID:
+        raise AssertionError(result)
+    if result.latency_ms < 0:
+        raise AssertionError(result)
+    if result.raw_response["usage"] != {
+        "input_tokens": 100,
+        "output_tokens": 25,
+    }:
+        raise AssertionError(result.raw_response)
+    if "api_key" in result.raw_response:
+        raise AssertionError(result.raw_response)
+
+    if client.messages.calls != [
+        {
+            "model": MODEL_ID,
+            "messages": [{"role": "user", "content": "Where did Alice move?"}],
+            "max_tokens": 64,
+            "temperature": 0.2,
+        }
+    ]:
+        raise AssertionError(client.messages.calls)
+
+
+@pytest.mark.asyncio
+async def test_retry_succeeds_after_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeRateLimitError("rate limited", status_code=429),
+            FakeResponse(output_text="Recovered"),
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=1),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    result = await model.generate("Question?")
+
+    if result.output != "Recovered":
+        raise AssertionError(result)
+    if len(client.messages.calls) != 2:
+        raise AssertionError(client.messages.calls)
+    # Without a limiter the backoff is the unchanged fixed exponential: one 1.0s wait before the
+    # single retry. The pacer's full jitter applies only when rate limits are configured.
+    if sleep.delays != [1.0]:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_exhaustion_raises_rate_limit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeRateLimitError("rate limited", status_code=429),
+            FakeRateLimitError("rate limited again", status_code=429),
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=1),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    with pytest.raises(ModelRateLimitError):
+        await model.generate("Question?")
+
+    if len(client.messages.calls) != 2:
+        raise AssertionError(client.messages.calls)
+    # Without a limiter the backoff is the unchanged fixed exponential: one 1.0s wait before the
+    # single retry. The pacer's full jitter applies only when rate limits are configured.
+    if sleep.delays != [1.0]:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_billing_error_maps_to_framework_billing_error_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeBillingError(
+                "Your credit balance is too low to access the Anthropic API.",
+                status_code=400,
+            )
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=2),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    with pytest.raises(ModelBillingError):
+        await model.generate("Question?")
+
+    if len(client.messages.calls) != 1:
+        raise AssertionError(client.messages.calls)
+    if sleep.delays != []:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_server_error_exhaustion_raises_model_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeServerError("server error", status_code=500),
+            FakeServerError("server error again", status_code=503),
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=1),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    with pytest.raises(ModelError):
+        await model.generate("Question?")
+
+    if len(client.messages.calls) != 2:
+        raise AssertionError(client.messages.calls)
+    # Without a limiter the backoff is the unchanged fixed exponential: one 1.0s wait before the
+    # single retry. The pacer's full jitter applies only when rate limits are configured.
+    if sleep.delays != [1.0]:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_retry_succeeds_after_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeConnectionError("Connection error."),
+            FakeResponse(output_text="Recovered"),
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=1),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    result = await model.generate("Question?")
+
+    if result.output != "Recovered":
+        raise AssertionError(result)
+    if len(client.messages.calls) != 2:
+        raise AssertionError(client.messages.calls)
+    # Without a limiter the backoff is the unchanged fixed exponential: one 1.0s wait before the
+    # single retry. The pacer's full jitter applies only when rate limits are configured.
+    if sleep.delays != [1.0]:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_connection_error_exhaustion_raises_model_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient(
+        [
+            FakeConnectionError("Connection error."),
+            FakeConnectionError("Connection error again."),
+        ]
+    )
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=1),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    with pytest.raises(ModelError):
+        await model.generate("Question?")
+
+    if len(client.messages.calls) != 2:
+        raise AssertionError(client.messages.calls)
+    # Without a limiter the backoff is the unchanged fixed exponential: one 1.0s wait before the
+    # single retry. The pacer's full jitter applies only when rate limits are configured.
+    if sleep.delays != [1.0]:
+        raise AssertionError(sleep.delays)
+
+
+@pytest.mark.asyncio
+async def test_authentication_error_maps_to_framework_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient([FakeAuthenticationError("bad key", status_code=401)])
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID),
+        client_factory=FakeClientFactory(client),
+    )
+
+    with pytest.raises(ModelAuthenticationError):
+        await model.generate("Question?")
+
+
+@pytest.mark.asyncio
+async def test_timeout_retries_then_exhausts_and_is_marked_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    # A timeout is transient, so it now retries -- but capped at TIMEOUT_MAX_RETRIES (2), i.e. three
+    # physical attempts, even with the larger max_retries (8) canonical suites use. On exhaustion
+    # it is surfaced retryable=True, so the question is recoverable on resume.
+    client = FakeClient([TimeoutError(f"deadline {i}") for i in range(5)])
+    sleep = SleepRecorder()
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID, max_retries=8),
+        client_factory=FakeClientFactory(client),
+        backoff_sleep=sleep,
+    )
+
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await model.generate("Question?")
+
+    if len(client.messages.calls) != 3:
+        raise AssertionError(client.messages.calls)
+    if sleep.delays != [1.0, 2.0]:
+        raise AssertionError(sleep.delays)
+    if exc_info.value.context.get("retryable") is not True:
+        raise AssertionError(exc_info.value.context)
+
+
+@pytest.mark.asyncio
+async def test_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    client = FakeClient([FakeResponse()])
+    model = AnthropicModel(
+        AnthropicModelConfig(model_id=MODEL_ID),
+        client_factory=FakeClientFactory(client),
+    )
+
+    await model.initialize()
+    await model.close()
+    await model.close()
+
+    if client.close_count != 1:
+        raise AssertionError(client.close_count)

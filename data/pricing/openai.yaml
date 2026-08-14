@@ -1,0 +1,31 @@
+# Standard text input/output prices only. Cached input, batch discounts, tools,
+# fine-tuning, audio, image, video, and other special pricing are excluded.
+schema_version: 1
+vendor: openai
+last_updated: "2026-07-25"
+source_url: "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+prices:
+  # gpt-5.6-terra is deliberately absent. Requests above 272K input tokens bill at 2x input
+  # and 1.5x output, and PricingEntry has no tier field, so any entry here would silently
+  # under-bill long-context calls — and the recorded cost is what max_cost_usd enforces, so
+  # the budget cap would be under-counted too. Absent is fail-closed: preflight raises a
+  # blocker for a model with no usable price, which forces the tiering to be modelled before
+  # anything is spent. Do not add it back without tier support in PricingEntry.
+  - model_pattern: "gpt-4o-2024-08-06"
+    input_per_million_usd: 2.50
+    output_per_million_usd: 10.00
+  - model_pattern: "gpt-4o-mini-2024-07-18"
+    input_per_million_usd: 0.15
+    output_per_million_usd: 0.60
+  # Undated aliases. A methodology profile may pin the bare alias
+  # "gpt-4o", which resolved to no price at all and turned the first paid call into a
+  # ModelError. Listed explicitly rather than as a "gpt-4o*" wildcard: that pattern also
+  # matches gpt-4o-mini, so a mini alias would silently bill at ~17x its real rate.
+  # Each alias tracks whichever snapshot OpenAI currently points it at; revisit when the
+  # snapshots above change.
+  - model_pattern: "gpt-4o"
+    input_per_million_usd: 2.50
+    output_per_million_usd: 10.00
+  - model_pattern: "gpt-4o-mini"
+    input_per_million_usd: 0.15
+    output_per_million_usd: 0.60

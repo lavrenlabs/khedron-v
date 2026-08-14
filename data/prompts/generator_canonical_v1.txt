@@ -1,0 +1,10 @@
+You are an AI assistant with access to memories from a long conversation between {speaker_a} and {speaker_b}.
+
+Use the provided memories to answer the question accurately. Base your answer ONLY on information from the memories. If the memories do not contain enough information to answer, say "I don't have enough information to answer that question."
+
+Memories:
+{formatted_memories}
+
+Question: {question_text}
+
+Provide a concise, factual answer based on the memories above.

@@ -1,0 +1,157 @@
+{%- macro score_cell(score) -%}
+{%- if score is none -%}
+n/a
+{%- else -%}
+{{ "%.1f%% [%.1f, %.1f]" % (score.point_estimate * 100, score.ci_95_low * 100, score.ci_95_high * 100) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro pct(value) -%}
+{{ "%.1f%%" % (value * 100) }}
+{%- endmacro -%}
+# Technical Deep Dive - {{ context.run_status.experiment_name }}
+
+{% if generated_at is defined -%}
+**Generated at:** {{ generated_at }}
+
+{% endif -%}
+## Run Configuration
+
+| Field | Value |
+|---|---|
+| Suite ID | {{ context.run_status.suite_id }} |
+| Experiment ID | {{ context.run_status.experiment_id }} |
+| Run ID | {{ context.run_status.run_id }} |
+| Run number | {{ context.run_status.run_number }} |
+| Status | {{ context.run_status.status }} |
+| Started | {{ context.run_status.started_at.isoformat() }} |
+| Finished | {% if context.run_status.finished_at is not none %}{{ context.run_status.finished_at.isoformat() }}{% else %}n/a{% endif %} |
+| Provider | {{ context.run_status.provider_type }} {{ context.run_status.provider_version }} |
+| Answer model | {{ context.run_status.answer_model_id }} |
+| Judge model | {{ context.run_status.judge_model_id }} |
+| Methodology | {{ context.run_status.methodology_version }} / {{ context.run_status.methodology_profile }} |
+| Methodology fingerprint | {% if context.methodology.methodology_fingerprint is not none %}{{ context.methodology.methodology_fingerprint }}{% else %}n/a{% endif %} |
+| Framework version | {{ context.run_status.framework_version }} |
+{%- if context.experiment_result is not none %}
+| Top-K retrieval | {{ context.methodology.retrieval_budget_label(context.experiment_result.config.top_k_retrieval) }} |
+| Max concurrent questions | {{ context.experiment_result.config.max_concurrent_questions }} |
+{%- else %}
+| Top-K retrieval | n/a |
+| Max concurrent questions | n/a |
+{%- endif %}
+
+## Lifecycle and Reproducibility
+
+| Field | Value |
+|---|---|
+| Run-start event ID | {{ context.run_started_event.event_id }} |
+| Run-start timestamp | {{ context.run_started_event.timestamp.isoformat() }} |
+| Suite status | {{ context.suite_status.status }} |
+| Suite last event | {{ context.suite_status.last_event_type }} at {{ context.suite_status.last_event_at.isoformat() }} |
+| Benchmark | {{ context.run_started_event.benchmark_type }} {{ context.run_started_event.benchmark_version }} |
+| Benchmark checksum | {{ context.run_started_event.benchmark_checksum }} |
+| Methodology reference | {% if context.methodology.reference_name is not none %}{{ context.methodology.reference_name }}{% else %}n/a{% endif %} |
+| Reference commit | {% if context.methodology.reference_commit is not none %}{{ context.methodology.reference_commit }}{% else %}n/a{% endif %} |
+| Seed | {{ context.run_started_event.seed }} |
+
+## Aggregate Results
+
+Overall scores cover {{ context.methodology.scored_scope_label }}. Per-category figures below
+report every evaluated category, including any excluded from the overall.
+
+| Mode | Overall score |
+|---|---|
+| Audited | {{ score_cell(context.run_status.overall_score_audited) }} |
+| Standard | {{ score_cell(context.run_status.overall_score_standard) }} |
+
+{% if context.experiment_result is not none -%}
+### Experiment Aggregate
+
+| Mode | Runs | Pooled score |
+|---|---:|---|
+| Audited | {{ context.experiment_result.n_runs }} | {% if context.experiment_result.aggregate_overall_audited is not none %}{{ score_cell(context.experiment_result.aggregate_overall_audited.pooled_score) }}{% else %}n/a{% endif %} |
+| Standard | {{ context.experiment_result.n_runs }} | {% if context.experiment_result.aggregate_overall_standard is not none %}{{ score_cell(context.experiment_result.aggregate_overall_standard.pooled_score) }}{% else %}n/a{% endif %} |
+{% endif %}
+
+## Per-Category Analysis
+
+{% if context.run_status.by_category_audited -%}
+### Audited
+
+| Category | n | Correct | Errors | Partial | Unknown | Score |
+|---|---:|---:|---:|---:|---:|---|
+{% for category, score in context.run_status.by_category_audited.items() -%}
+| {{ category }} | {{ score.n_total }} | {{ score.n_correct }} | {{ score.n_errors }} | {{ score.n_partial }} | {{ score.n_unknown }} | {{ score_cell(score) }} |
+{% endfor %}
+{% else -%}
+No audited per-category scores are available.
+{% endif %}
+
+{% if context.run_status.by_category_standard -%}
+### Standard
+
+| Category | n | Correct | Errors | Partial | Unknown | Score |
+|---|---:|---:|---:|---:|---:|---|
+{% for category, score in context.run_status.by_category_standard.items() -%}
+| {{ category }} | {{ score.n_total }} | {{ score.n_correct }} | {{ score.n_errors }} | {{ score.n_partial }} | {{ score.n_unknown }} | {{ score_cell(score) }} |
+{% endfor %}
+{% else -%}
+No standard per-category scores are available.
+{% endif %}
+
+## Question Totals
+
+| Metric | Value |
+|---|---:|
+| Conversations processed | {{ context.run_status.n_conversations_processed }} |
+| Questions attempted | {{ context.run_status.n_questions_attempted }} |
+| Questions succeeded | {{ context.run_status.n_questions_succeeded }} |
+| Questions errored | {{ context.run_status.n_questions_errored }} |
+| Questions in report context | {{ context.questions|length }} |
+| Failed questions in report context | {{ context.failed_questions|length }} |
+
+## Cost Analysis
+
+Total cost: ${{ "%.2f" % context.cost_summary.total_cost_usd }}
+
+### Cost by Phase
+
+| Phase | Cost |
+|---|---:|
+{% for phase, cost in context.cost_summary.cost_by_phase.items() -%}
+| {{ phase }} | ${{ "%.2f" % cost }} |
+{% else -%}
+| n/a | $0.00 |
+{% endfor %}
+
+### Cost by Model
+
+| Model | Cost |
+|---|---:|
+{% for model, cost in context.cost_summary.cost_by_model.items() -%}
+| {{ model }} | ${{ "%.2f" % cost }} |
+{% else -%}
+| n/a | $0.00 |
+{% endfor %}
+
+## Failure Analysis Summary
+
+| Metric | Value |
+|---|---:|
+| Category breakdown entries | {{ context.failure_analysis.category_breakdown|length }} |
+| Failed question summaries | {{ context.failure_analysis.failed_questions|length }} |
+| Detected patterns | {{ context.failure_analysis.patterns|length }} |
+| Traceability entries | {{ context.failure_analysis.traceability_index|length }} |
+
+{% if context.failure_analysis.patterns -%}
+### Detected Patterns
+
+| Pattern | Affected | Rule confidence | Suggested remedy |
+|---|---:|---:|---|
+{% for pattern in context.failure_analysis.patterns -%}
+| {{ pattern.pattern_name }} | {{ pattern.n_affected_questions }} | {{ pct(pattern.confidence) }} | {{ pattern.suggested_remedy }} |
+{% endfor %}
+{% else -%}
+No detected patterns are available.
+{% endif %}
+
+{% include "_methodology_disclosure.md.j2" %}

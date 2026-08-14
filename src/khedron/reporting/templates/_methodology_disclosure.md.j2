@@ -1,0 +1,58 @@
+{%- macro yes_no(value) -%}
+{%- if value -%}Yes{%- else -%}No{%- endif -%}
+{%- endmacro -%}
+{% if context.withdrawal_reasons -%}
+> **These scores must not be published.** This report was generated with `--force` over a run whose
+> disposition is withdrawn:
+{% for reason in context.withdrawal_reasons %}
+> - {{ reason }}
+{%- endfor %}
+
+{% endif -%}
+## Methodology Disclosure
+
+| Field | Value |
+|---|---|
+| Methodology version | {{ context.methodology.methodology_version }} |
+| Methodology profile | {{ context.methodology.methodology_profile }} |
+| Methodology fingerprint | {% if context.methodology.methodology_fingerprint is not none %}{{ context.methodology.methodology_fingerprint }}{% else %}n/a{% endif %} |
+| Scoring mode | {{ context.methodology.scoring_mode }} |
+| Confidence interval | {{ context.methodology.confidence_interval }} |
+| Framework version | {{ context.run_started_event.framework_version }} |
+| Reference | {% if context.methodology.reference_name is not none %}{{ context.methodology.reference_name }}{% else %}n/a{% endif %} |
+| Reference URL | {% if context.methodology.reference_url is not none %}{{ context.methodology.reference_url }}{% else %}n/a{% endif %} |
+| Reference commit | {% if context.methodology.reference_commit is not none %}{{ context.methodology.reference_commit }}{% else %}n/a{% endif %} |
+| Benchmark | {{ context.methodology.benchmark_type }} {{ context.methodology.benchmark_version }} |
+| Benchmark checksum | {{ context.methodology.benchmark_checksum }} |
+| Corpus coverage | {{ context.methodology.corpus_scope_label }} |
+| Conversation ingestion | {{ context.ingestion.label }} |
+| Answer model | {{ context.run_started_event.answer_model_id }} ({{ context.run_started_event.answer_model_vendor }}) |
+| Judge model | {{ context.run_started_event.judge_model_id }} ({{ context.run_started_event.judge_model_vendor }}) |
+| Cross-vendor | {{ yes_no(context.run_started_event.answer_model_vendor != context.run_started_event.judge_model_vendor) }} |
+| Same-vendor warning | {{ yes_no(context.methodology.same_vendor_warning) }} |
+{%- if context.experiment_result is not none %}
+| Top-K retrieval | {{ context.methodology.retrieval_budget_label(context.experiment_result.config.top_k_retrieval) }} |
+| Multi-run | {{ context.experiment_result.n_runs }} runs, seed={{ context.run_started_event.seed }} |
+{%- else %}
+{#- A single-run report has no aggregate to read the budget from, and printing n/a hid the one
+    parameter canonical-v2 exists to pin: a run that retrieved 200 memories reported nothing at
+    all. The run's own record carries it, so read it from there. #}
+| Top-K retrieval | {% if context.run_started_event.config.get("top_k_retrieval") is not none %}{{ context.methodology.retrieval_budget_label(context.run_started_event.config.get("top_k_retrieval")) }}{% else %}not recorded{% endif %} |
+| Multi-run | single run, seed={{ context.run_started_event.seed }} |
+{%- endif %}
+
+### Conformance
+
+This report uses binary canonical scoring: only CORRECT counts as success, and every displayed binomial score includes a Wilson 95% confidence interval.
+
+### Reproducibility Identifiers
+
+| Field | Value |
+|---|---|
+| Run ID | {{ context.run_status.run_id }} |
+| Suite ID | {{ context.run_status.suite_id }} |
+| Experiment ID | {{ context.run_status.experiment_id }} |
+| Experiment name | {{ context.run_status.experiment_name }} |
+| Run number | {{ context.run_status.run_number }} |
+| Provider | {{ context.run_started_event.provider_type }} {{ context.run_started_event.provider_version }} |
+| Seed | {{ context.run_started_event.seed }} |{{ "\n" -}}

@@ -1,0 +1,69 @@
+{%- macro pct(value) -%}
+{{ "%.1f%%" % (value * 100) }}
+{%- endmacro -%}
+# Failure Analysis - {{ context.run_status.experiment_name }}
+
+{% if generated_at is defined -%}
+**Generated at:** {{ generated_at }}
+
+{% endif -%}
+**Run ID:** {{ context.failure_analysis.run_id }}
+
+## Summary
+
+{{ context.failed_questions|length }} of {{ context.questions|length }} question(s) in this report context failed.
+
+## Category Failure Breakdown
+
+| Category | Total | Failed | Failure rate |
+|---|---:|---:|---:|
+{% for breakdown in context.failure_analysis.category_breakdown -%}
+| {{ breakdown.category.value }} | {{ breakdown.n_total }} | {{ breakdown.n_failed }} | {{ pct(breakdown.failure_rate) }} |
+{% else -%}
+| n/a | 0 | 0 | 0.0% |
+{% endfor %}
+
+## Detected Patterns
+
+{% if context.failure_analysis.patterns -%}
+| Pattern | Affected | Rule confidence | Affected question IDs |
+|---|---:|---:|---|
+{% for pattern in context.failure_analysis.patterns -%}
+| {{ pattern.pattern_name }} | {{ pattern.n_affected_questions }} | {{ pct(pattern.confidence) }} | {% for question_id in pattern.affected_question_ids %}{{ question_id }}{% if not loop.last %}, {% endif %}{% endfor %} |
+{% endfor %}
+
+{% for pattern in context.failure_analysis.patterns -%}
+### {{ pattern.pattern_name }}
+
+{{ pattern.description }}
+
+Suggested remedy: {{ pattern.suggested_remedy }}
+
+This is rule confidence, not a statistical probability.
+
+{% endfor -%}
+{% else -%}
+No failure patterns were detected.
+{% endif %}
+
+## Failed Question Summaries
+
+| Question ID | Category | Verdict | Error phase | Question | Expected | Generated or error |
+|---|---|---|---|---|---|---|
+{% for question in context.failure_analysis.failed_questions -%}
+| {{ question.question_id }} | {{ question.category.value }} | {{ question.verdict.value }} | {% if question.error_phase is not none %}{{ question.error_phase }}{% else %}n/a{% endif %} | {{ question.question_text }} | {{ question.expected_answer }} | {% if question.generated_answer is not none %}{{ question.generated_answer }}{% elif question.error_message is not none %}{{ question.error_message }}{% else %}n/a{% endif %} |
+{% else -%}
+| n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+{% endfor %}
+
+## Traceability Index
+
+| Question ID | Retrieval ID | Response ID | Judgment ID |
+|---|---|---|---|
+{% for entry in context.failure_analysis.traceability_index -%}
+| {{ entry.question_id }} | {% if entry.retrieval_id is not none %}{{ entry.retrieval_id }}{% else %}n/a{% endif %} | {% if entry.response_id is not none %}{{ entry.response_id }}{% else %}n/a{% endif %} | {% if entry.judgment_id is not none %}{{ entry.judgment_id }}{% else %}n/a{% endif %} |
+{% else -%}
+| n/a | n/a | n/a | n/a |
+{% endfor %}
+
+{% include "_methodology_disclosure.md.j2" %}

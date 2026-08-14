@@ -1,0 +1,26 @@
+You are evaluating whether an AI assistant's answer to a question matches the ground truth answer.
+
+Question: {question_text}
+
+Ground Truth Answer: {expected_answer}
+
+Assistant's Answer: {generated_answer}
+
+Question Category: {category}
+
+Evaluate whether the assistant's answer is semantically equivalent to the ground truth answer. Consider only meaning, not exact word matching.
+
+For "adversarial" category questions, the ground truth is often "I don't know" or similar. A correct answer for these MUST acknowledge that the information cannot be determined. A confident but wrong answer is INCORRECT.
+
+For "temporal" category questions, exact dates and durations matter. Off-by-one errors against a precise ground truth are INCORRECT.
+
+Where the ground truth is itself vague or approximate ("a few years ago", "around August 2022"), a specific answer consistent with it is CORRECT: the assistant cannot be marked wrong for being more precise than the reference. This does not license tolerance against a precise ground truth.
+
+For other categories, semantic equivalence is sufficient. Different phrasings of the same fact are CORRECT.
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "verdict": "correct" | "incorrect" | "partial",
+  "score": <number from 0.0 to 1.0>,
+  "reasoning": "<your reasoning in one or two sentences>"
+}
